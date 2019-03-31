@@ -281,6 +281,7 @@ int Myler_Init(MylerPlayer *player, int argc, char *argv[])
     Myler_AddKeyEvent(player, 'R', Replay);
     Myler_AddKeyEvent(player, 'Y', ShowSearch);
     Myler_AddKeyEvent(player, 'U', ShowLyrics);
+    Myler_AddKeyEvent(player, 'E', Search);
 
     player->current_list = player->list[LocalList];
     MylerList_SetCurrent(player->list[LocalList], 0);
