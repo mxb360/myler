@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 
@@ -18,11 +19,12 @@ static void DataReset(MylerUI *ui)
     ui->current_time = ui->total_time = MAX_TIME;
 
     ui->buffer.search_line.color = UI_SEARCH_COLOR;
-    ui->buffer.title_line.color = UI_TITLE_COLOR;
+    ui->buffer.status_line.color = UI_TITLE_COLOR;
     ui->main_window_frame.disable = true;
     ui->list_frame.disable = true;
     ui->search_frame.disable = true;
     ui->timer_frame.disable = true;
+    ui->title_frame.disable = true;
 }
 
 /* （私有函数）
@@ -36,8 +38,12 @@ static void DataReset(MylerUI *ui)
 static char *StringShowLimit(char *string, const char *end_string, int length, int align_style)
 {
     int i = 0;
-    char buf[UI_WIDTH];
+    char buf[UI_MAX_WIDTH];
     int end_string_len = strlen(end_string);
+
+    if (length <= 0)
+        return strcpy(string, "");
+
     // 先全部填充空格
     strcpy(buf, string);
     memset(string, ' ', length);                
@@ -45,7 +51,7 @@ static char *StringShowLimit(char *string, const char *end_string, int length, i
 
     length -= end_string_len;
     while (buf[i] && i < length) {
-        if (buf[i++] < 0)                        // 非ASCII字符
+        if (buf[i++] < 0)                           // 非ASCII字符
             i++;
         if (i == length - 2) {                      // 位置位于非ASCII字符内
             strcpy(buf + length - 4, " ...");
@@ -81,8 +87,8 @@ static char *StringShowLimit(char *string, const char *end_string, int length, i
  */
 static void BufferReload(UIStringLine *str_line, UIFrame *frame)
 {
-    strcpy(str_line->str, str_line->src_str);
-    StringShowLimit(str_line->str, str_line->end_str, frame->w - 1, str_line->align_style);
+    strncpy(str_line->str, str_line->src_str, UI_MAX_WIDTH);
+    StringShowLimit(str_line->str, str_line->end_str, frame->w - 2, str_line->align_style);
 }
 
 /* 显示列表界面（私有函数）
@@ -91,7 +97,7 @@ static void ShowList(MylerUI *ui)
 {
     if (ui->list_frame.disable)
         return;
-    for (int i = 0; i < ui->list_frame.h - 1; i++) {
+    for (int i = 0; i < ui->list_frame.h - 2; i++) {
         if (ui->redraw || ui->buffer.list_lines[i].status) {
             BufferReload(&ui->buffer.list_lines[i], &ui->list_frame);
             con_set_pos(ui->list_frame.x + 1, ui->list_frame.y + i + 1);
@@ -108,7 +114,7 @@ static void ShowMainWindow(MylerUI *ui)
 {
     if (ui->main_window_frame.disable)
         return;
-    for (int i = 0; i < ui->main_window_frame.h - 1; i++) {
+    for (int i = 0; i < ui->main_window_frame.h - 2; i++) {
         if (ui->redraw || ui->buffer.main_window_lines[i].status) {
             BufferReload(&ui->buffer.main_window_lines[i], &ui->main_window_frame);
             con_set_pos(ui->main_window_frame.x + 1, ui->main_window_frame.y + i + 1);
@@ -126,24 +132,33 @@ static void ShowMainWindow(MylerUI *ui)
  */
 static void ShowTimer(MylerUI *ui)
 {
+    if (ui->timer_frame.disable)
+        return;
     // 如果时间没变，直接返回
-    if (ui->redraw || (ui->buffer.timer_line.status && !ui->timer_frame.disable)) {
+    if (ui->redraw || ui->buffer.timer_line.status) {
+        ui->buffer.timer_line.src_str[0] = ' ';
+        memset(ui->buffer.timer_line.src_str + 1, '-', UI_TIMER_LENGTH);
+
+        int current = ui->total_time ? (int)(UI_TIMER_LENGTH * 1.0 * ui->current_time / ui->total_time) : 0;
+        ui->buffer.timer_line.src_str[current + 1] = '*';
+        sprintf(ui->buffer.timer_line.src_str + UI_TIMER_LENGTH + 1, " %02d:%02d/%02d:%02d",
+                ui->current_time / 60, ui->current_time % 60, ui->total_time / 60, ui->total_time % 60);
+        BufferReload(&ui->buffer.timer_line, &ui->timer_frame);
+
         con_set_fcolor(UI_TIMER_COLOR1);
-        con_set_pos(ui->timer_frame.x + 2, ui->timer_frame.y + 2);
+        con_set_pos(ui->timer_frame.x + 1, ui->timer_frame.y + 2);
         // 绘制进度条
-        int current = ui->total_time ? UI_TIMER_LENGTH * 1.0 * ui->current_time / ui->total_time : 0;
-        for (int i = 0; i < current; i++)
-            fputc('-', myler_stdout);
-        putchar('*');
-        con_set_fcolor(UI_TIMER_COLOR2);
-        for (int i = current; i < UI_TIMER_LENGTH; i++)
-            fputc('-', myler_stdout);
-
-        // 显示时间
-        con_set_fcolor(UI_TIMER_COLOR3);
-        fprintf(myler_stdout, " %02d:%02d/%02d:%02d", ui->current_time / 60,
-                ui->current_time % 60, ui->total_time / 60, ui->total_time % 60);
-
+        bool is_color3_set = false;
+        for (int i = 0; ui->buffer.timer_line.str[i]; i++)
+        {
+            fputc(ui->buffer.timer_line.str[i], myler_stdout);
+            if (ui->buffer.timer_line.str[i] == '*')
+                con_set_fcolor(UI_TIMER_COLOR2);
+            if (i && !is_color3_set && ui->buffer.timer_line.str[i] == ' ') {
+                con_set_fcolor(UI_TIMER_COLOR3);
+                is_color3_set = true;
+            }
+        }
         ui->buffer.timer_line.status = false;
     }
 }
@@ -152,14 +167,18 @@ static void ShowTimer(MylerUI *ui)
  */
 static void ShowSearch(MylerUI *ui)
 {
-    if (ui->redraw || (ui->buffer.search_line.status && !ui->search_frame.disable && !ui->main_window_frame.disable)) {
+    if (ui->main_window_frame.disable || ui->search_frame.disable)
+        return;
+    if (ui->redraw || ui->buffer.search_line.status) {
+        BufferReload(&ui->buffer.search_line, &ui->search_frame);
         con_set_pos(ui->search_frame.x + 1, ui->search_frame.y + 1);
         con_set_fcolor(ui->buffer.search_line.color);
 
         char *p;
-        for (p = ui->buffer.search_line.src_str; *p != ' '; p++)
+        for (p = ui->buffer.search_line.str; *p != ' '; p++)
             fputc(*p, myler_stdout);
         con_reset_color();
+        
         fprintf(myler_stdout, "%s", p);
         ui->buffer.search_line.status = false;
     }
@@ -168,21 +187,21 @@ static void ShowSearch(MylerUI *ui)
 static void ShowMessage(MylerUI *ui)
 {
     static int t = 0;
-    char buf[UI_WIDTH];
+    char buf[ui->max_width];
 
-    if (ui->redraw || ui->message_status) {
+    if (ui->message_status) {
         if (ui->list_frame.disable && ui->main_window_frame.disable && ui->timer_frame.disable)
             con_set_pos(0, 0);
         else
-            con_set_pos(0, ui->timer_frame.y + 5);
+            con_set_pos(0, ui->height);
         strcpy(buf, ui->message_buf);
         if (ui->message_type) {
             con_set_fcolor(LRED);
-            StringShowLimit(buf, "", UI_WIDTH - 4, AlignLeft);
+            StringShowLimit(buf, "", ui->max_width - 4, AlignLeft);
             fprintf(myler_stdout, "错误：%s", buf);
         } else {
             con_set_fcolor(LYELLOW);
-            StringShowLimit(buf, "", UI_WIDTH, AlignLeft);
+            StringShowLimit(buf, "", ui->max_width, AlignLeft);
             fprintf(myler_stdout, "%s", buf);
         }
         t = 20;
@@ -195,9 +214,9 @@ static void ShowMessage(MylerUI *ui)
             if (ui->list_frame.disable && ui->main_window_frame.disable && ui->timer_frame.disable)
                 con_set_pos(0, 0);
             else
-                con_set_pos(0, ui->timer_frame.y + 5);
+                con_set_pos(0, ui->height);
             strcpy(buf, " ");
-            StringShowLimit(buf, "", UI_WIDTH, AlignLeft);
+            StringShowLimit(buf, "", ui->max_width, AlignLeft);
             fprintf(myler_stdout, "%s", buf);
         }
     }
@@ -205,12 +224,27 @@ static void ShowMessage(MylerUI *ui)
 
 /* 显示音乐状态栏（私有函数）
  */
+static void ShowStatus(MylerUI *ui)
+{
+    if (ui->timer_frame.disable )
+        return;
+    if (ui->redraw || ui->buffer.status_line.status) {
+        BufferReload(&ui->buffer.status_line, &ui->timer_frame);
+        con_set_fcolor(UI_STATUS_COLOR);
+        con_set_pos(ui->timer_frame.x + 1, ui->timer_frame.y + 1);
+        fprintf(myler_stdout, "%s", ui->buffer.status_line.str);
+        ui->buffer.status_line.status = false;
+    }
+}
+
 static void ShowTitle(MylerUI *ui)
 {
-    if (ui->redraw || (ui->buffer.title_line.status && !ui->timer_frame.disable)) {
-        BufferReload(&ui->buffer.title_line, &ui->timer_frame);
+    if (ui->title_frame.disable )
+        return;
+    if (ui->redraw || ui->buffer.title_line.status) {
+        BufferReload(&ui->buffer.title_line, &ui->title_frame);
         con_set_fcolor(UI_TITLE_COLOR);
-        con_set_pos(ui->timer_frame.x + 1, ui->timer_frame.y + 1);
+        con_set_pos(ui->title_frame.x + 1, ui->title_frame.y + 1);
         fprintf(myler_stdout, "%s", ui->buffer.title_line.str);
         ui->buffer.title_line.status = false;
     }
@@ -218,7 +252,9 @@ static void ShowTitle(MylerUI *ui)
 
 static void ShowBottomLine(MylerUI *ui)
 {
-    if (ui->redraw || (ui->buffer.bottom_line.status && !ui->timer_frame.disable)) {
+    if (ui->timer_frame.disable )
+        return;
+    if (ui->redraw || ui->buffer.bottom_line.status) {
         BufferReload(&ui->buffer.bottom_line, &ui->timer_frame);
         con_set_fcolor(ui->buffer.bottom_line.color);
         con_set_pos(ui->timer_frame.x + 1, ui->timer_frame.y + 3);
@@ -231,18 +267,23 @@ static void ShowBottomLine(MylerUI *ui)
  */
 static void DrawRect(int x, int y, int w, int h)
 {
-    for (int i = 0; i <= h; i++) {
-        con_set_pos(x, y + i);
-        for (int j = 0; j <= w; j++)
+    for (int i = 0; i < h; i++) {
+        //con_set_pos(x, y + i);
+        for (int j = 0; j < w; j++)
         {
-            if ((i == 0 && (j == 0 || j == w)) || (i == h && (j == 0 || j == w)))
+            if ((i == 0 && (j == 0 || j == w-1)) || (i == h-1 && (j == 0 || j == w-1)))
+            {
+                con_set_pos(x + j, y + i);
                 fputc('+', myler_stdout);
-            else if (i == 0 || i == h)
+            }
+            else if (i == 0 || i == h-1)  {
+                con_set_pos(x + j, y + i);
                 fputc('-', myler_stdout);
-            else if (j == 0 || j == w)
+            }
+            else if (j == 0 || j == w-1) {
+                con_set_pos(x + j, y + i);
                 fputc('|', myler_stdout);
-            else
-                fputc(' ', myler_stdout);
+            }
         }
     }
 }
@@ -252,8 +293,8 @@ static void DrawRect(int x, int y, int w, int h)
 static void UIClear(MylerUI *ui)
 {
     con_set_pos(0, 0);
-    for (int i = 0; i <= UI_HEIGHT; i++) {
-        for (int j = 0; j < UI_WIDTH; j++)
+    for (int i = 0; i <= ui->max_height; i++) {
+        for (int j = 0; j < ui->max_width; j++)
             fputc(' ', myler_stdout);
         fputc('\n', myler_stdout);
     }
@@ -264,8 +305,9 @@ static void UIClear(MylerUI *ui)
  */
 static void ShowUIFrame(MylerUI *ui)
 {
-    UIClear(ui);
     con_set_fcolor(UI_COLOR);
+    if (!ui->title_frame.disable)
+        DrawRect(ui->title_frame.x, ui->title_frame.y, ui->title_frame.w, ui->title_frame.h);
     if (!ui->timer_frame.disable)
         DrawRect(ui->timer_frame.x, ui->timer_frame.y, ui->timer_frame.w, ui->timer_frame.h);
     if (!ui->list_frame.disable)
@@ -274,6 +316,13 @@ static void ShowUIFrame(MylerUI *ui)
         DrawRect(ui->search_frame.x, ui->search_frame.y, ui->search_frame.w, ui->search_frame.h);
     if (!ui->main_window_frame.disable)
         DrawRect(ui->main_window_frame.x, ui->main_window_frame.y, ui->main_window_frame.w, ui->main_window_frame.h);
+
+    con_set_pos(0, ui->height);
+    for (int i = ui->height; i < ui->max_height; i++) {
+        for (int j = 0; j <= ui->width; j++)
+            fputc(' ', myler_stdout);
+        fputc('\n', myler_stdout);
+    }
 }
 
 
@@ -284,24 +333,31 @@ int MylerUI_Init(MylerUI *ui)
     if (!ui)
         return -1;
 
-    // 设置界面缓冲区（只对Windows控制台有效）
-    int w, h;
-    con_get_buf_size(&w, &h);
-    w = w > UI_WIDTH + 4 ? w : UI_WIDTH + 4;
-    h = h > UI_HEIGHT + 4 ? h : UI_HEIGHT + 4;
-    con_set_buf_size(w, h);
-    con_clear();
+    DataReset(ui);
+
+    ui->max_height = UI_MAX_HEIGHT;
+    ui->max_width = UI_MAX_WIDTH;
 
     // 初始化所有数据为默认值
-    DataReset(ui);
     // 设置各个界面的默认显示状态
+    MylerUI_SetTitleDisplay(ui, true);
     MylerUI_SetListDisplay(ui, true);
     MylerUI_SetMainWindowDisplay(ui, true);
     MylerUI_SetTimerDisplay(ui, true);
     MylerUI_SetSearchDisplay(ui, true);
-
     MylerUI_SetSearch(ui, 0, 0, "");
     MylerUI_SetTimer(ui, 0, 0);
+    MylerUI_SetTitle(ui, "Myler Player 多功能音乐播放器 V2.0");
+
+    // 设置界面缓冲区（只对Windows控制台有效）
+    int w, h;
+
+    con_get_buf_size(&w, &h);
+    w = w > ui->max_width + 4 ? w : ui->max_width + 4;
+    h = h > ui->max_height + 4 ? h : ui->max_height + 4;
+    con_set_buf_size(w, h);
+    //con_clear();
+    //con_set_cur_visible(false);
 
     return 0;
 }
@@ -316,7 +372,7 @@ void MylerUI_SetSearch(MylerUI *ui, int search_name, int search_type, const char
     Myler_Assert(ui);
     Myler_Assert(search_words);
 
-    snprintf(ui->buffer.search_line.src_str, UI_WIDTH, "%s|%s|(搜索): %s",
+    snprintf(ui->buffer.search_line.src_str, ui->max_width, "%s|%s|(搜索): %s",
              search_name_string[search_name], search_type_string[search_type], search_words);
     ui->buffer.search_line.status = true;
 }
@@ -380,6 +436,24 @@ void MylerUI_SetListLine(MylerUI *ui, int line, color_t fcolor, int align_style,
 /* 设置位于进度条上方的标题文字 
  * title：标题字符串
  */
+void MylerUI_SetStatusLine(MylerUI *ui, const char *title_format, ...)
+{
+    Myler_Assert(ui);
+    Myler_Assert(title_format);
+
+    char buf[MAX_STR_BUF];
+    va_list ap;
+    va_start(ap, title_format);
+    vsprintf(buf, title_format, ap);
+    va_end(ap);
+
+    if (!strcmp(ui->buffer.status_line.src_str, buf))
+        return;
+    strncpy(ui->buffer.status_line.src_str, buf, ui->max_width);
+    ui->buffer.status_line.status = true;
+    ui->buffer.status_line.align_style = AlignCenter;
+}
+
 void MylerUI_SetTitle(MylerUI *ui, const char *title_format, ...)
 {
     Myler_Assert(ui);
@@ -393,7 +467,7 @@ void MylerUI_SetTitle(MylerUI *ui, const char *title_format, ...)
 
     if (!strcmp(ui->buffer.title_line.src_str, buf))
         return;
-    strncpy(ui->buffer.title_line.src_str, buf, UI_WIDTH);
+    strncpy(ui->buffer.title_line.src_str, buf, ui->max_width);
     ui->buffer.title_line.status = true;
     ui->buffer.title_line.align_style = AlignCenter;
 }
@@ -413,7 +487,7 @@ void MylerUI_SetBottomLine(MylerUI *ui, int align_style, color_t color, const ch
 
     if (!strcmp(ui->buffer.bottom_line.src_str, buf) && ui->buffer.bottom_line.color == color)
         return;
-    strncpy(ui->buffer.bottom_line.src_str, buf, UI_WIDTH);
+    strncpy(ui->buffer.bottom_line.src_str, buf, ui->max_width);
     ui->buffer.bottom_line.status = true;
     ui->buffer.bottom_line.color = color;
     ui->buffer.bottom_line.align_style = align_style;
@@ -459,13 +533,16 @@ void MylerUI_Draw(MylerUI *ui)
     Myler_Assert(ui);
 
     ui->buffer.search_line.status = true;
-    ui->buffer.title_line.status = true;
+    ui->buffer.status_line.status = true;
     ui->buffer.timer_line.status = true;
+    ui->buffer.bottom_line.status = true;
+
     ui->redraw = true;
-    for (int i = 0; i < UI_MAIN_WINDOW_HEIGHT; i++) {
+    
+    for (int i = 0; i < ui->main_window_frame.h; i++) 
         ui->buffer.main_window_lines[i].status = true;
+    for (int i = 0; i < ui->list_frame.h; i++) 
         ui->buffer.list_lines[i].status = true;
-    }
 }
 
 void MylerUI_ClearMainWindow(MylerUI *ui)
@@ -489,11 +566,76 @@ void MylerUI_Update(MylerUI *ui)
     ShowTimer(ui);
     ShowMainWindow(ui);
     ShowList(ui);
+    ShowStatus(ui);
     ShowTitle(ui);
     ShowMessage(ui);
     ShowBottomLine(ui);
 
     ui->redraw = false;
+}
+
+void MylerUI_UpdateFrame(MylerUI *ui)
+{
+    ui->width = ui->max_width;
+    ui->height = 0;
+    ui->title_frame.x = ui->title_frame.y = 0;
+    ui->list_frame.x = ui->list_frame.y = 0;
+    ui->search_frame.x = ui->search_frame.y = 0;
+    ui->main_window_frame.x = ui->main_window_frame.y = 0;
+    ui->timer_frame.x = ui->timer_frame.y = 0;
+    ui->title_frame.w = ui->title_frame.h = 0;
+    ui->search_frame.w = ui->max_width, ui->search_frame.h = 0;
+    ui->list_frame.w = ui->max_width, ui->list_frame.h = ui->max_height;
+    ui->main_window_frame.w = ui->max_width, ui->main_window_frame.h = ui->max_height;
+    ui->timer_frame.w = ui->timer_frame.h = 0;
+
+    if (!ui->title_frame.disable) {
+        ui->title_frame.w = ui->max_width;
+        ui->title_frame.h = 3;
+        ui->main_window_frame.y += 2;
+        ui->list_frame.y += 2;
+        ui->search_frame.y += 2;
+        ui->timer_frame.y += 2;
+        ui->height = ui->title_frame.y + ui->title_frame.h;
+    }
+
+    if (!ui->list_frame.disable) {
+        ui->list_frame.w = ui->max_width;
+        ui->list_frame.h = ui->max_height - ui->list_frame.y;
+        ui->height = ui->list_frame.y + ui->list_frame.h;
+    }
+
+    if (!ui->search_frame.disable) {
+        if (!ui->list_frame.disable) 
+            ui->search_frame.w = ui->max_width / 3 * 2;
+        ui->search_frame.h = 3;
+        ui->main_window_frame.y += 2;    
+    }
+
+    if (!ui->main_window_frame.disable) {
+        ui->main_window_frame.h = ui->max_height - ui->main_window_frame.y;
+        if (!ui->list_frame.disable) {
+            ui->main_window_frame.w = ui->max_width / 3 * 2;
+            ui->list_frame.w = ui->max_width - ui->main_window_frame.w + 1;
+            ui->main_window_frame.x = ui->list_frame.w - 1;
+        }
+        ui->search_frame.x = ui->main_window_frame.x;
+        ui->height = ui->main_window_frame.y + ui->main_window_frame.h;
+    }
+
+    if (!ui->timer_frame.disable) {
+        ui->timer_frame.w = ui->max_width;
+        ui->timer_frame.h = 5;
+        if (!ui->list_frame.disable) {
+            ui->list_frame.h -= 4;
+            ui->timer_frame.y = ui->list_frame.h + ui->list_frame.y - 1;
+        }
+        if (!ui->main_window_frame.disable) {
+            ui->main_window_frame.h -= 4;
+            ui->timer_frame.y = ui->main_window_frame.h + ui->main_window_frame.y - 1;
+        }
+        ui->height = ui->timer_frame.y + ui->timer_frame.h;
+    }
 }
 
 /* 设置列表界面的显示状态
@@ -502,21 +644,9 @@ void MylerUI_Update(MylerUI *ui)
 void MylerUI_SetListDisplay(MylerUI *ui, bool enable)
 {
     Myler_Assert(ui);
-
     ui->list_frame.disable = !enable;
-    if (enable) {
-        ui->list_frame.x = 0;
-        ui->list_frame.y = 0;
-        ui->list_frame.w = ui->main_window_frame.disable ? UI_WIDTH - 1 : UI_WIDTH / 3;
-        ui->list_frame.h = UI_MAIN_WINDOW_HEIGHT + (ui->timer_frame.disable ? 7 : 3);
-        ui->timer_frame.y = UI_HEIGHT - 5;
-    }  
-    if (!ui->main_window_frame.disable) {
-        ui->search_frame.x = ui->main_window_frame.x = enable ? UI_WIDTH / 3 : 0;
-        ui->search_frame.w = ui->main_window_frame.w = enable ? UI_WIDTH / 3 * 2 : UI_WIDTH - 1;
-    } else if (!enable)
-        ui->timer_frame.y = 0;
-
+    ui->list_frame.status = true;
+    MylerUI_UpdateFrame(ui);
     MylerUI_Draw(ui);
 }
 
@@ -531,22 +661,9 @@ bool MylerUI_GetListDisable(MylerUI *ui)
 void MylerUI_SetMainWindowDisplay(MylerUI *ui, bool enable)
 {
     Myler_Assert(ui);
-
-    ui->main_window_frame.disable = !enable;
-    if (enable) {
-        ui->main_window_frame.x = ui->list_frame.disable ? 0 : UI_WIDTH / 3;
-        ui->main_window_frame.y = ui->search_frame.disable ? 0 : 2;
-        ui->main_window_frame.w = ui->list_frame.disable ? UI_WIDTH - 1: UI_WIDTH / 3 * 2;
-        ui->main_window_frame.h = ui->search_frame.disable ? UI_MAIN_WINDOW_HEIGHT + 3 : UI_MAIN_WINDOW_HEIGHT + 1;
-        ui->main_window_frame.h += ui->timer_frame.disable ? 4 : 0;
-        ui->timer_frame.y = UI_HEIGHT - 5;
-    }
-
-    if (!ui->list_frame.disable) {
-        ui->list_frame.w = enable ? UI_WIDTH / 3 : UI_WIDTH - 1;
-    } else if (!enable)
-        ui->timer_frame.y = 0;
-
+    ui->main_window_frame.disable = !enable; 
+    ui->main_window_frame.status = true;
+    MylerUI_UpdateFrame(ui);
     MylerUI_Draw(ui);
 }
 
@@ -561,24 +678,14 @@ bool MylerUI_GetMainWindowDisable(MylerUI *ui)
 void MylerUI_SetSearchDisplay(MylerUI *ui, bool enable)
 {
     Myler_Assert(ui);
-
     if (ui->main_window_frame.disable) {
         ui->search_frame.disable = true;
         return;
     }
 
     ui->search_frame.disable = !enable;
-
-    if (enable) {
-        ui->search_frame.x = ui->list_frame.disable ? 0 : UI_WIDTH / 3;
-        ui->search_frame.y = 0;
-        ui->search_frame.w = ui->list_frame.disable ? UI_WIDTH - 1 : UI_WIDTH / 3 * 2;
-        ui->search_frame.h = 3;
-    } 
-
-    ui->main_window_frame.h += enable ? -2 : 2;
-    ui->main_window_frame.y = enable ? 2 : 0;
-
+    ui->search_frame.status = true;
+    MylerUI_UpdateFrame(ui);
     MylerUI_Draw(ui);
 }
 
@@ -593,18 +700,9 @@ bool MylerUI_GetSearchDisable(MylerUI *ui)
 void MylerUI_SetTimerDisplay(MylerUI *ui, bool enable)
 {
     Myler_Assert(ui);
-
     ui->timer_frame.disable = !enable;
-    if (enable) {
-        ui->timer_frame.x = 0;
-        ui->timer_frame.y = ui->list_frame.disable && ui->main_window_frame.disable ? 0 : UI_HEIGHT - 5;
-        ui->timer_frame.w = UI_WIDTH - 1;
-        ui->timer_frame.h = 4;
-    }
-
-    ui->list_frame.h += (enable ? -4 : 4);
-    ui->main_window_frame.h += (enable ? -4 : 4);
-
+    ui->timer_frame.status = true;
+    MylerUI_UpdateFrame(ui);
     MylerUI_Draw(ui);
 }
 
@@ -613,10 +711,23 @@ bool MylerUI_GetTimerDisable(MylerUI *ui)
     return ui->timer_frame.disable;
 }
 
+void MylerUI_SetTitleDisplay(MylerUI *ui, bool enable)
+{
+    Myler_Assert(ui);
+    ui->timer_frame.status = true;
+    ui->title_frame.disable = !enable;
+    MylerUI_UpdateFrame(ui);
+    MylerUI_Draw(ui);
+}
+
+bool MylerUI_GetTitleDisable(MylerUI *ui)
+{
+    return ui->title_frame.disable;
+}
+
 void MylerUI_UpdateListChoice(UIStringLine lines[], int line_count)
 {
 
-    
 }
 
 /* 销毁界面
@@ -624,8 +735,9 @@ void MylerUI_UpdateListChoice(UIStringLine lines[], int line_count)
  */
 void MylerUI_Delet(MylerUI *ui, bool clear)
 {
-    con_reset_color();
     if (clear) {
-        UIClear(ui);    
+        UIClear(ui);
+        con_set_pos(0, ui->max_height + 1);
     }
+    con_reset_color();
 }

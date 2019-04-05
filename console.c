@@ -39,11 +39,11 @@ void con_reset_color(void)
         SetConsoleTextAttribute(hOut, raw_color);
 }
 
-void con_use_color(int use_color)
+void con_use_color(int _use_color)
 {
     if (!is_console_init)
         con_reset();
-    use_color = use_color;
+    use_color = _use_color;
 }
 
 /* 获取当前光标的坐标
@@ -172,6 +172,14 @@ void con_set_axis(int dx, int dy)
         con_reset();
     axis.X = dx;
     axis.Y = dy;
+}
+
+void con_set_cur_visible(int visible)
+{
+    CONSOLE_CURSOR_INFO cur_info = {1, 0};
+    GetConsoleCursorInfo(hOut, &cur_info);
+    cur_info.bVisible = visible;
+    SetConsoleCursorInfo(hOut, &cur_info);
 }
 
 /* 判断当前是否有按键按下

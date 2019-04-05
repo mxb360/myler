@@ -24,10 +24,11 @@ void Myler_PrintError(const char *format, ...)
     vsprintf(buf, format, ap);
     va_end(ap);
 
+    fprintf(myler_stderr, "myler: ");
     con_set_fcolor(LRED);
-    printf("myler: 错误：%s。\n", buf);
+    fprintf(myler_stderr, "错误：%s。\n", buf);
     con_reset_color();
-    printf("myler: 输入“--help”可查看帮助。\n");
+    fprintf(myler_stderr, "myler: 输入“myler --help”可查看帮助。\n");
 }
 
 /* 获得指定目录下的所有文件名 */

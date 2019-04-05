@@ -46,7 +46,7 @@ typedef struct _MylerPlayer {
     int search_type;
     char search_words[MAX_STR_BUF];
 
-    char search_str_bak[UI_HEIGHT][MAX_STR_BUF];
+    char search_str_bak[UI_MAX_HEIGHT][MAX_STR_BUF];
 } MylerPlayer;
 
 int Myler_Init(MylerPlayer *player, int argc, char *argv[]);
@@ -56,6 +56,6 @@ int Myler_CreateTempList(MylerPlayer *player);
 int Myler_CreateDefaultList(MylerPlayer *player);
 void Myler_AddKeyEvent(MylerPlayer *player, int key, MylerKeyEventFunc key_event_func);
 void Myler_SearchLoaclMusic(MylerPlayer *player);
-void Myler_Quit(MylerPlayer *player);
+void Myler_Quit(MylerPlayer *player, bool clear);
 
 #endif

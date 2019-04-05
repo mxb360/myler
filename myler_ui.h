@@ -6,8 +6,8 @@
 #include "console.h"
 
 typedef struct {
-    char src_str[UI_WIDTH];
-    char str[UI_WIDTH];
+    char src_str[UI_MAX_WIDTH];
+    char str[UI_MAX_WIDTH];
     char end_str[7];
     color_t color;
     int align_style;
@@ -16,10 +16,11 @@ typedef struct {
 
 typedef struct {
     UIStringLine search_line;
-    UIStringLine main_window_lines[UI_HEIGHT];
-    UIStringLine list_lines[UI_HEIGHT];
-    UIStringLine title_line;
+    UIStringLine main_window_lines[UI_MAX_HEIGHT];
+    UIStringLine list_lines[UI_MAX_HEIGHT];
+    UIStringLine status_line;
     UIStringLine timer_line;
+    UIStringLine title_line;
     UIStringLine bottom_line;
 } UIStringBuffer;
 
@@ -27,13 +28,19 @@ typedef struct {
 typedef struct {
     int x, y, w, h;
     int disable;
+    bool status;
 } UIFrame;
 
 typedef struct MylerUI {
+    int width, height;
+    int old_width, old_height;
+    int max_width, max_height;
+
     UIFrame list_frame;
     UIFrame main_window_frame;
     UIFrame search_frame;
     UIFrame timer_frame;
+    UIFrame title_frame;
 
     UIStringBuffer buffer;
 
@@ -54,6 +61,7 @@ void MylerUI_SetSearch(MylerUI *ui, int search_name, int search_type, const char
 void MylerUI_SetTimer(MylerUI *ui, unsigned int current_time, unsigned int total_time);
 void MylerUI_SetListLine(MylerUI *ui, int line, color_t fcolor, int align_style, const char *format, ...);
 void MylerUI_SetMainWindowLine(MylerUI *ui, int line, color_t fcolor, int align_style, const char *format, ...);
+void MylerUI_SetStatusLine(MylerUI *ui, const char *title_format, ...);
 void MylerUI_SetTitle(MylerUI *ui, const char *title_format, ...);
 void MylerUI_SetBottomLine(MylerUI *ui, int align_style, color_t color, const char *format, ...);
 void MylerUI_SetListDisplay(MylerUI *ui, bool enable);
@@ -67,6 +75,8 @@ void MylerUI_SetTimerDisplay(MylerUI *ui, bool enable);
 bool MylerUI_GetListDisable(MylerUI *ui);
 bool MylerUI_GetMainWindowDisable(MylerUI *ui);
 bool MylerUI_GetSearchDisable(MylerUI *ui);
+void MylerUI_SetTitleDisplay(MylerUI *ui, bool enable);
+bool MylerUI_GetTitleDisable(MylerUI *ui);
 bool MylerUI_GetTimerDisable(MylerUI *ui);
 void MylerUI_Delet(MylerUI *ui, bool clear);
 

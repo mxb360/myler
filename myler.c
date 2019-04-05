@@ -6,6 +6,11 @@
 
 #include "myler.h"
 
+static void Myler_Exit(MylerPlayer *player)
+{
+    Myler_Quit(player, true);
+}
+
 /* 按键触发：反转列表界面显 示状态（私有函数） */
 static void ToggleListDisplay(MylerPlayer *player)
 {
@@ -18,7 +23,7 @@ static void ToggleMainWindowDisplay(MylerPlayer *player)
     MylerUI_SetMainWindowDisplay(player->ui, MylerUI_GetMainWindowDisable(player->ui));
     player->show_main_lyric = !MylerUI_GetMainWindowDisable(player->ui);
 }
- 
+
 /* 按键触发：反转搜索栏显示状态（私有函数） */
 static void ToggleSearchDisplay(MylerPlayer *player)
 {
@@ -29,6 +34,12 @@ static void ToggleSearchDisplay(MylerPlayer *player)
 static void ToggleTimerDisplay(MylerPlayer *player)
 {
     MylerUI_SetTimerDisplay(player->ui, MylerUI_GetTimerDisable(player->ui));
+}
+
+/* 按键触发：反转标题栏显示状态（私有函数） */
+static void ToggleTitleDisplay(MylerPlayer *player)
+{
+    MylerUI_SetTitleDisplay(player->ui, MylerUI_GetTitleDisable(player->ui));
 }
 
 /* 按键触发：暂停/继续播放音乐（私有函数） */
@@ -209,8 +220,24 @@ void Myler_ExecCmdLine(MylerPlayer *player)
 {
     if (player->cmdline->have_help)  {
         MylerCmdLine_PrintHelp();
-        Myler_Quit(0);
-    }
+        Myler_Quit(player, 0);
+    } else if (player->cmdline->have_version) {
+        con_set_fcolor(LYELLOW);
+        fprintf(myler_stdout, "Myler Player 多功能音乐播放器 V2.0\n");
+        con_reset_color();
+        Myler_Quit(player, 0);
+    } 
+
+    if (player->cmdline->volume >= 0)
+        player->volume = player->cmdline->volume;
+    if (player->cmdline->have_loop)
+        player->play_mode = PlayListLoop;
+    if (player->cmdline->have_order)
+        player->play_mode = PlayInOrder;
+    if (player->cmdline->have_repeat)
+        player->play_mode = PlayRepeatOne;
+    if (player->cmdline->have_shuffle)
+        player->play_mode = PlayShuffle;
 
     for (int i = 0; i < player->cmdline->music_name_count; i++) {
         Myler_AddLoaclFileToList(player->list[TempList], player->cmdline->music_name[i]);
@@ -245,7 +272,6 @@ int Myler_Init(MylerPlayer *player, int argc, char *argv[])
     int err_code;
     if ((err_code = MylerCmdLine_Init(player->cmdline, argc, argv)))
         return err_code;
-
     // 创建本地列表
     Myler_CreateDefaultList(player);
     Myler_CreateTempList(player);
@@ -258,15 +284,21 @@ int Myler_Init(MylerPlayer *player, int argc, char *argv[])
     Myler_ExecCmdLine(player);
     if (MylerUI_Init(player->ui))
         return -1;
-
+    if (player->cmdline->have_mini) {
+        MylerUI_SetTitleDisplay(player->ui, false);
+        MylerUI_SetListDisplay(player->ui, false);
+        MylerUI_SetMainWindowDisplay(player->ui, false);
+        player->show_main_lyric = false;
+    }
     MylerUI_SetSearch(player->ui, player->search_name, player->search_type, player->search_words);
 
     // 默认的按键事件绑定
     Myler_AddKeyEvent(player, 'K', ToggleListDisplay);
-    Myler_AddKeyEvent(player, 'Q', Myler_Quit);
+    Myler_AddKeyEvent(player, 'Q', Myler_Exit);
     Myler_AddKeyEvent(player, 'J', ToggleMainWindowDisplay);
     Myler_AddKeyEvent(player, 'H', ToggleTimerDisplay);
     Myler_AddKeyEvent(player, 'L', ToggleSearchDisplay);
+    Myler_AddKeyEvent(player, 'G', ToggleTitleDisplay);
     Myler_AddKeyEvent(player, '.', Next);
     Myler_AddKeyEvent(player, ' ', PlayOrPause);
     Myler_AddKeyEvent(player, ',', Prev);
@@ -283,9 +315,12 @@ int Myler_Init(MylerPlayer *player, int argc, char *argv[])
     Myler_AddKeyEvent(player, 'U', ShowLyrics);
     Myler_AddKeyEvent(player, 'E', Search);
 
-    player->current_list = player->list[LocalList];
-    MylerList_SetCurrent(player->list[LocalList], 0);
+    player->current_list = player->list[TempList]->music_count ?  player->list[TempList] : player->list[LocalList];
+    int current_index = player->play_mode == PlayShuffle ? rand() % player->current_list->music_count : 0;
+    MylerList_SetCurrent(player->current_list, current_index);
     MylerListDisplay_SetList(&player->list_display, player->list, player->list_count);
+    if (player->cmdline->have_stop)
+        player->current_list->replay = false;
 
     return 0;
 }
@@ -375,7 +410,7 @@ void Myler_ListDisplayUpdate(MylerPlayer *player, MylerListDisplay *list_display
             if (list_display->current_choice == node)   
                 MylerUI_SetListLine(player->ui, line, LGREEN, AlignLeft, "◆* %s - %s", node->str1, node->str2);
             else if (node->music == player->current_list->current)
-                MylerUI_SetListLine(player->ui, line, GREEN, AlignLeft, "  * %s - %s", node->str1, node->str2);
+                MylerUI_SetListLine(player->ui, line, GREEN, AlignLeft, "◇* %s - %s", node->str1, node->str2);
             else
                 MylerUI_SetListLine(player->ui, line, LWHITE, AlignLeft, "  * %s - %s", node->str1, node->str2);
         }
@@ -400,14 +435,25 @@ void Myler_Update(MylerPlayer *player)
                 player->key_events[i].key_event_func(player);
     }
 
+    
+    // 列表
+    Myler_ListDisplayUpdate(player, &player->list_display, player->ui->list_frame.h - 2);
+
     // 播放
     if (player->current_list->replay) {
-        MylerList_Open(player->current_list);
-        if (MylerList_Play(player->current_list) == -2) {
+        if (MylerList_Open(player->current_list) == -2 || MylerList_Play(player->current_list) == -2) {
+            MylerUI_Update(player->ui);
             con_sleep(500);
-            MylerUI_SetMessage(player->ui, 1, "音乐播放失败：%s", music_get_last_error());
-            con_sleep(500);
-            MylerList_SetNext(player->current_list, player->play_mode);
+            MylerUI_SetMessage(player->ui, 1, "音乐“%s - %s”播放失败：%s", player->current_list->current->name,
+                               player->current_list->current->singer, music_get_last_error());
+            MylerUI_Update(player->ui);
+            con_sleep(1000);
+            MylerUI_SetMessage(player->ui, 0, "尝试播放下一首 ...", music_get_last_error());
+            if (player->play_mode == PlayRepeatOne)
+                MylerList_SetNext(player->current_list, PlayInOrder);
+            else
+                MylerList_SetNext(player->current_list, player->play_mode);
+            MylerUI_Update(player->ui);
             return;
         }
         music_set_volume(player->current_list->current->music, player->volume * 10);
@@ -419,22 +465,25 @@ void Myler_Update(MylerPlayer *player)
         player->current_list->current_time = music_get_current_length(player->current_list->current->music);
         player->current_list->play_status = music_get_status(player->current_list->current->music);
         MylerUI_SetTimer(player->ui, player->current_list->current_time / 1000, player->current_list->current->length / 1000);
-        if (player->current_list->current_time >=  player->current_list->current->length) {
+        if (player->current_list->play_status == MUSIC_STOPPED) 
             MylerList_SetNext(player->current_list, player->play_mode);
-            return;
-        }
     }
 
     // 状态栏
     if (player->current_list->is_play_end) {
-        MylerUI_SetTitle(player->ui, "播放器空闲中...");
+        if (player->cmdline->have_exit)
+            Myler_Quit(player, true);
+        MylerUI_SetStatusLine(player->ui, "播放器空闲中...");
         MylerUI_SetTimer(player->ui, 0, 0);
         MylerUI_ClearMainWindow(player->ui);
+        MylerUI_SetBottomLine(player->ui, AlignCenter, WHITE, " ");
+        MylerUI_Update(player->ui);
+        return;
     } else if (player->current_list->play_status == MUSIC_PLAYING)
-        MylerUI_SetTitle(player->ui, "正在播放“%s - %s”", player->current_list->current->name,
+        MylerUI_SetStatusLine(player->ui, "正在播放“%s - %s”", player->current_list->current->name,
                          player->current_list->current->singer);
     else if (player->current_list->play_status == MUSIC_PAUSED)
-         MylerUI_SetTitle(player->ui, "已暂停播放“%s - %s”", player->current_list->current->name,
+         MylerUI_SetStatusLine(player->ui, "已暂停播放“%s - %s”", player->current_list->current->name,
                          player->current_list->current->singer);
 
     // 歌词
@@ -463,17 +512,15 @@ void Myler_Update(MylerPlayer *player)
         }
     }
 
-    Myler_ListDisplayUpdate(player, &player->list_display, player->ui->list_frame.h - 1);
-
     // 界面
     MylerUI_Update(player->ui);
 }
 
-void Myler_Quit(MylerPlayer *player)
+void Myler_Quit(MylerPlayer *player, bool clear)
 {
-    MylerUI_Delet(player->ui, 1);
     for (int i = 0; i < player->list_count; i++)
         MylerList_Delet(player->list[i]);
 
+    MylerUI_Delet(player->ui, clear);
     exit(0);
 }

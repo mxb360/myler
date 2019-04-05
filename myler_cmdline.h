@@ -8,6 +8,17 @@ typedef struct MylerCmdLine {
     char **argv;
 
     bool have_help;
+    bool have_version;
+    bool have_exit;
+    bool have_mini;
+    bool have_stop;
+    bool have_order;
+    bool have_loop;
+    bool have_repeat;
+    bool have_shuffle;
+
+    int volume;
+
     const char *music_name[100];
     int music_name_count;
 } MylerCmdLine;

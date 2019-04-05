@@ -160,7 +160,7 @@ int MylerList_Open(MylerList *list)
     if (!list->current)
         return -1;
     if (!(list->current->music = music_create(list->current->path))) {
-        return -1;
+        return -2;
     }
 
     char buf[MAX_STR_BUF];
@@ -216,7 +216,7 @@ int MylerList_SetNext(MylerList *list, int play_mode)
     if (play_mode == PlayRepeatOne) 
         return 0;
     else if (list->current == list->tail && play_mode == PlayInOrder)
-        list->is_play_end = true;
+        list->is_play_end = true, list->replay = false;
     else if (list->current == list->tail && play_mode == PlayListLoop)
         list->current = list->head;
     else if (list->current != list->tail && play_mode != PlayShuffle) 
@@ -233,7 +233,9 @@ int MylerList_SetPrev(MylerList *list)
     if (!list->current)
         return -1;
     MylerList_ClearCurrent(list);
-    if (list->current != list->head)
+    if (list->is_play_end)
+        list->current = list->tail;
+    else if (list->current != list->head)
         list->current = list->current->prev;
     list->replay = true;
     return 0;

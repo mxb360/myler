@@ -56,6 +56,7 @@ void con_set_bcolor(color_t color);
 void con_set_origin(int x, int y);
 void con_set_axis(int dx, int dy);
 void con_set_buf_size(int w, int h);
+void con_set_cur_visible(int visible);
 int  con_have_key(void);
 int  con_get_key(int _case);
 void con_pause(const char *prompt);
